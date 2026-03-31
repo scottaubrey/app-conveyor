@@ -21,10 +21,9 @@ export class Engine {
     if (this.running) return;
     this.running = true;
     const interval = this.cfg.pollIntervalMs ?? 60_000;
-    // Run immediately, then on interval
     this.poll().catch(console.error);
     this.timer = setInterval(() => this.poll().catch(console.error), interval);
-    console.log(`[engine] started, polling every ${interval / 1000}s`);
+    console.log(`[engine:${this.cfg.id}] started, polling every ${interval / 1000}s`);
   }
 
   stop() {
@@ -33,7 +32,7 @@ export class Engine {
   }
 
   async poll() {
-    console.log(`[engine] poll at ${new Date().toISOString()}`);
+    console.log(`[engine:${this.cfg.id}] poll at ${new Date().toISOString()}`);
     await this.discoverNewCommits();
     await this.advancePackages();
   }
@@ -43,26 +42,26 @@ export class Engine {
   private async discoverNewCommits() {
     const gitSteps = this.cfg.steps.filter(s => s.type === "git");
     for (const step of gitSteps) {
-      console.log(`[engine] git: checking ${step.repo}/${step.branch}`);
+      console.log(`[engine:${this.cfg.id}] git: checking ${step.repo}/${step.branch}`);
       try {
         const commit = await fetchLatestCommit(step);
         if (!commit) {
-          console.log(`[engine] git: no commit returned for ${step.repo}/${step.branch}`);
+          console.log(`[engine:${this.cfg.id}] git: no commit returned for ${step.repo}/${step.branch}`);
           continue;
         }
 
-        // Check if we already have this commit
-        const existing = getPackage(commit.sha);
+        const pkgId = `${this.cfg.id}:${commit.sha}`;
+        const existing = getPackage(pkgId);
         if (existing) {
-          console.log(`[engine] git: ${commit.sha.slice(0, 7)} already tracked`);
+          console.log(`[engine:${this.cfg.id}] git: ${commit.sha.slice(0, 7)} already tracked`);
           continue;
         }
 
-        console.log(`[engine] new commit ${commit.sha.slice(0, 7)} on ${step.repo}/${step.branch}: ${commit.message}`);
+        console.log(`[engine:${this.cfg.id}] new commit ${commit.sha.slice(0, 7)} on ${step.repo}/${step.branch}: ${commit.message}`);
 
-        // Create the package
         const pkg: Omit<Package, "steps"> = {
-          id: commit.sha,
+          id: pkgId,
+          pipelineId: this.cfg.id,
           commitHash: commit.sha,
           repoFullName: step.repo!,
           branch: step.branch!,
@@ -74,13 +73,11 @@ export class Engine {
         };
         upsertPackage(pkg);
 
-        // Register the Git step as passed immediately
         const gitState = buildStepState(step, commit);
-        upsertStepState(commit.sha, gitState);
+        upsertStepState(pkgId, gitState);
 
-        // Initialise remaining steps as pending
         for (const s of this.cfg.steps.filter(s2 => s2.type !== "git")) {
-          upsertStepState(commit.sha, {
+          upsertStepState(pkgId, {
             stepId: s.id,
             status: "pending",
             label: "…",
@@ -88,7 +85,7 @@ export class Engine {
           });
         }
       } catch (e) {
-        console.error(`[engine] git discover error:`, e);
+        console.error(`[engine:${this.cfg.id}] git discover error:`, e);
       }
     }
   }
@@ -96,26 +93,23 @@ export class Engine {
   // ─── Step 2: advance all packages through remaining steps ────────────────
 
   private async advancePackages() {
-    const packages = listPackages(100);
+    const packages = listPackages(this.cfg.id, 100);
     for (const pkg of packages) {
-      // Skip fully-passed or failed packages older than 48h
       const allPassed = pkg.steps.every(s => s.status === "passed");
       if (allPassed) continue;
-
       await this.advancePackage(pkg);
     }
   }
 
   private async advancePackage(pkg: Package) {
     const stepMap = new Map(pkg.steps.map(s => [s.stepId, s]));
-    // Build up upstream IDs as we go so each step sees the latest values
     const upstream = this.gatherUpstream(pkg.steps);
 
     for (const stepCfg of this.cfg.steps) {
-      if (stepCfg.type === "git") continue; // already handled
+      if (stepCfg.type === "git") continue;
 
       const current = stepMap.get(stepCfg.id);
-      if (current?.status === "passed") continue; // done
+      if (current?.status === "passed") continue;
 
       let newState: StepState;
       try {
@@ -130,21 +124,17 @@ export class Engine {
         };
       }
 
-      console.log(`[engine] ${pkg.commitHash.slice(0, 7)} [${stepCfg.id}] → ${newState.status} (${newState.label})${newState.detail ? ` | ${newState.detail}` : ""}`);
+      console.log(`[engine:${this.cfg.id}] ${pkg.commitHash.slice(0, 7)} [${stepCfg.id}] → ${newState.status} (${newState.label})${newState.detail ? ` | ${newState.detail}` : ""}`);
       upsertStepState(pkg.id, newState);
 
-      // Propagate newly-acquired IDs forward so later steps can use them
       if (newState.commitHash) upstream.commitHash = newState.commitHash;
       if (newState.ghaRunId) upstream.ghaRunId = newState.ghaRunId;
       if (newState.imageDigest) upstream.imageDigest = newState.imageDigest;
       if (newState.imageTag) upstream.imageTag = newState.imageTag;
       if (newState.syncRevision) upstream.syncRevision = newState.syncRevision;
 
-      // The pipeline is sequential: each step's output feeds the next.
-      // Stop advancing if the step hasn't passed (or been skipped).
-      // On the next poll we'll retry from this step.
       if (newState.status === "failed") {
-        console.log(`[engine] ${pkg.commitHash.slice(0, 7)} stopped at [${stepCfg.id}]: failed`);
+        console.log(`[engine:${this.cfg.id}] ${pkg.commitHash.slice(0, 7)} stopped at [${stepCfg.id}]: failed`);
         break;
       }
       if (newState.status === "pending" || newState.status === "running") {
@@ -152,9 +142,9 @@ export class Engine {
       }
     }
 
-    // Update package's updatedAt
     upsertPackage({
       id: pkg.id,
+      pipelineId: pkg.pipelineId,
       commitHash: pkg.commitHash,
       repoFullName: pkg.repoFullName,
       branch: pkg.branch,

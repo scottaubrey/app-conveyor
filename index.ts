@@ -3,11 +3,16 @@ import { Engine } from "./src/engine";
 import { createServer } from "./src/server";
 
 const cfg = await loadConfig();
-const engine = new Engine(cfg);
 
-engine.start();
-createServer(cfg, () => engine.poll());
+const pollers = new Map<string, () => Promise<void>>();
 
-// Graceful shutdown
-process.on("SIGTERM", () => { engine.stop(); process.exit(0); });
-process.on("SIGINT",  () => { engine.stop(); process.exit(0); });
+for (const pipeline of cfg.pipelines) {
+  const engine = new Engine(pipeline);
+  pollers.set(pipeline.id, () => engine.poll());
+  engine.start();
+}
+
+createServer(cfg, pollers);
+
+process.on("SIGTERM", () => process.exit(0));
+process.on("SIGINT",  () => process.exit(0));

@@ -30,8 +30,14 @@ export interface StepConfig {
 }
 
 export interface PipelineConfig {
+  id: string;
+  name: string;
   pollIntervalMs?: number;
   steps: StepConfig[];
+}
+
+export interface AppConfig {
+  pipelines: PipelineConfig[];
 }
 
 // ─── Package / Artifact ──────────────────────────────────────────────────────
@@ -53,7 +59,8 @@ export interface StepState {
 }
 
 export interface Package {
-  id: string;           // commit_hash (primary key)
+  id: string;           // "{pipelineId}:{commitHash}"
+  pipelineId: string;
   commitHash: string;
   repoFullName: string;
   branch: string;
@@ -62,5 +69,5 @@ export interface Package {
   createdAt: string;    // ISO
   updatedAt: string;    // ISO
   steps: StepState[];
-  currentStep: number;  // index of last reached step
+  currentStep: number;
 }

@@ -15,14 +15,15 @@ export function getDb(): Database {
 function initSchema(db: Database) {
   db.run(`
     CREATE TABLE IF NOT EXISTS packages (
-      id          TEXT PRIMARY KEY,
-      commit_hash TEXT NOT NULL,
-      repo        TEXT NOT NULL,
-      branch      TEXT NOT NULL,
-      author_name TEXT,
-      message     TEXT,
-      created_at  TEXT NOT NULL,
-      updated_at  TEXT NOT NULL,
+      id           TEXT PRIMARY KEY,
+      pipeline_id  TEXT NOT NULL,
+      commit_hash  TEXT NOT NULL,
+      repo         TEXT NOT NULL,
+      branch       TEXT NOT NULL,
+      author_name  TEXT,
+      message      TEXT,
+      created_at   TEXT NOT NULL,
+      updated_at   TEXT NOT NULL,
       current_step INTEGER NOT NULL DEFAULT 0
     )
   `);
@@ -45,7 +46,6 @@ function initSchema(db: Database) {
     )
   `);
 
-  // History snapshots so the UI can show past deployments
   db.run(`
     CREATE TABLE IF NOT EXISTS step_history (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,8 +64,8 @@ function initSchema(db: Database) {
 export function upsertPackage(pkg: Omit<Package, "steps">): void {
   const db = getDb();
   db.run(`
-    INSERT INTO packages (id, commit_hash, repo, branch, author_name, message, created_at, updated_at, current_step)
-    VALUES ($id, $commit_hash, $repo, $branch, $author_name, $message, $created_at, $updated_at, $current_step)
+    INSERT INTO packages (id, pipeline_id, commit_hash, repo, branch, author_name, message, created_at, updated_at, current_step)
+    VALUES ($id, $pipeline_id, $commit_hash, $repo, $branch, $author_name, $message, $created_at, $updated_at, $current_step)
     ON CONFLICT(id) DO UPDATE SET
       updated_at   = excluded.updated_at,
       current_step = excluded.current_step,
@@ -73,6 +73,7 @@ export function upsertPackage(pkg: Omit<Package, "steps">): void {
       message      = excluded.message
   `, {
     $id: pkg.id,
+    $pipeline_id: pkg.pipelineId,
     $commit_hash: pkg.commitHash,
     $repo: pkg.repoFullName,
     $branch: pkg.branch,
@@ -98,14 +99,14 @@ export function upsertStepState(packageId: string, state: StepState): void {
       ($pkg, $step, $status, $label, $detail, $updated_at,
        $commit_hash, $gha_run_id, $image_digest, $image_tag, $sync_revision)
     ON CONFLICT(package_id, step_id) DO UPDATE SET
-      status       = excluded.status,
-      label        = excluded.label,
-      detail       = excluded.detail,
-      updated_at   = excluded.updated_at,
-      commit_hash  = excluded.commit_hash,
-      gha_run_id   = excluded.gha_run_id,
-      image_digest = excluded.image_digest,
-      image_tag    = excluded.image_tag,
+      status        = excluded.status,
+      label         = excluded.label,
+      detail        = excluded.detail,
+      updated_at    = excluded.updated_at,
+      commit_hash   = excluded.commit_hash,
+      gha_run_id    = excluded.gha_run_id,
+      image_digest  = excluded.image_digest,
+      image_tag     = excluded.image_tag,
       sync_revision = excluded.sync_revision
   `, {
     $pkg: packageId,
@@ -121,7 +122,6 @@ export function upsertStepState(packageId: string, state: StepState): void {
     $sync_revision: state.syncRevision ?? null,
   } as any);
 
-  // Record history if status changed
   if (!prev || prev.status !== state.status) {
     db.run(`
       INSERT INTO step_history (package_id, step_id, status, label, detail, recorded_at)
@@ -146,11 +146,20 @@ export function getPackage(id: string): Package | null {
   return hydrate(db, row);
 }
 
-export function listPackages(limit = 50): Package[] {
+export function findPackageByCommitPrefix(pipelineId: string, prefix: string): Package | null {
   const db = getDb();
-  const rows = db.query<any, []>(
-    "SELECT * FROM packages ORDER BY created_at DESC LIMIT 50"
-  ).all();
+  const rows = db.query<any, [string]>(
+    "SELECT * FROM packages WHERE pipeline_id = ? ORDER BY created_at DESC LIMIT 200"
+  ).all(pipelineId);
+  const row = rows.find(r => r.commit_hash.startsWith(prefix));
+  return row ? hydrate(db, row) : null;
+}
+
+export function listPackages(pipelineId: string, limit = 50): Package[] {
+  const db = getDb();
+  const rows = db.query<any, [string, number]>(
+    "SELECT * FROM packages WHERE pipeline_id = ? ORDER BY created_at DESC LIMIT ?"
+  ).all(pipelineId, limit);
   return rows.map(r => hydrate(db, r));
 }
 
@@ -161,6 +170,7 @@ function hydrate(db: Database, row: any): Package {
 
   return {
     id: row.id,
+    pipelineId: row.pipeline_id,
     commitHash: row.commit_hash,
     repoFullName: row.repo,
     branch: row.branch,

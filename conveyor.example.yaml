@@ -1,0 +1,43 @@
+pipelines:
+  - id: epp-client
+    name: Enhanced Preprints Client
+    pollIntervalMs: 60000
+    steps:
+      - id: src
+        type: git
+        repo: elifesciences/enhanced-preprints-client
+        branch: master
+
+      - id: ci
+        type: gha
+        repo: elifesciences/enhanced-preprints-client
+        workflow: deploy.yaml
+
+      - id: reg
+        type: ghcr
+        image: ghcr.io/elifesciences/enhanced-preprints-client
+
+      - id: auto
+        type: flux-image
+        policy: epp-client-approved
+        namespace: epp--prod
+
+      - id: sync
+        type: flux-kustomize
+        name: epp-client
+        automation: epp-client
+        namespace: epp--prod
+
+      - id: live
+        type: k8s-deploy
+        name: epp-client
+        namespace: epp--prod
+
+  - id: another-app
+    name: Another App
+    steps:
+      - id: src
+        type: git
+        repo: elifesciences/another-app
+        branch: main
+      # ... more steps

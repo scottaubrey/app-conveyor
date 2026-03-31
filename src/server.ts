@@ -1,10 +1,16 @@
-import type { PipelineConfig } from "./types";
-import { listPackages, getPackage, getStepHistory, upsertPackage, upsertStepState } from "./db";
-import { renderDashboard, renderPackageDetail } from "./render";
+import type { AppConfig, PipelineConfig } from "./types";
+import { listPackages, findPackageByCommitPrefix, getStepHistory } from "./db";
+import { renderLandingPage, renderDashboard, renderPackageDetail } from "./render";
 import { now } from "./util";
 
-export function createServer(cfg: PipelineConfig, triggerPoll?: () => Promise<void>) {
+export function createServer(
+  cfg: AppConfig,
+  pollers: Map<string, () => Promise<void>>
+) {
   const port = Number(process.env.PORT ?? 3000);
+  const pipelineMap = new Map<string, PipelineConfig>(
+    cfg.pipelines.map(p => [p.id, p])
+  );
 
   const server = Bun.serve({
     port,
@@ -12,51 +18,66 @@ export function createServer(cfg: PipelineConfig, triggerPoll?: () => Promise<vo
       const url = new URL(req.url);
       const path = url.pathname;
 
-      // GET / — main dashboard
+      // GET / — landing page
       if (path === "/" || path === "") {
-        const packages = listPackages(50);
-        const html = renderDashboard(packages, cfg, new Date());
+        const pipelineSummaries = cfg.pipelines.map(pipeline => {
+          const latest = listPackages(pipeline.id, 1)[0] ?? null;
+          return { pipeline, latest };
+        });
+        const html = renderLandingPage(pipelineSummaries, new Date());
         return new Response(html, {
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
       }
 
-      // GET /package/:id — detail view
-      const detailMatch = path.match(/^\/package\/([a-f0-9]{7,40})$/);
-      if (detailMatch && detailMatch[1]) {
-        const id = detailMatch[1];
-        // Accept short hashes — find full match
-        const pkg = findPackageByPrefix(id);
-        if (!pkg) {
-          return new Response("Package not found", { status: 404 });
-        }
+      // POST /pipeline/:pipelineId/sync — trigger poll, redirect to dashboard
+      const syncMatch = path.match(/^\/pipeline\/([^/]+)\/sync$/);
+      if (syncMatch && syncMatch[1] && req.method === "POST") {
+        const pipelineId = syncMatch[1];
+        const trigger = pollers.get(pipelineId);
+        if (!trigger) return new Response("Pipeline not found", { status: 404 });
+        await trigger();
+        return new Response(null, { status: 303, headers: { Location: `/pipeline/${pipelineId}` } });
+      }
+
+      // GET /pipeline/:pipelineId — pipeline dashboard
+      const dashMatch = path.match(/^\/pipeline\/([^/]+)$/);
+      if (dashMatch && dashMatch[1] && req.method === "GET") {
+        const pipelineId = dashMatch[1];
+        const pipeline = pipelineMap.get(pipelineId);
+        if (!pipeline) return new Response("Pipeline not found", { status: 404 });
+        const packages = listPackages(pipelineId, 50);
+        const html = renderDashboard(packages, pipeline, new Date());
+        return new Response(html, {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+
+      // GET /pipeline/:pipelineId/package/:commitId — package detail
+      const detailMatch = path.match(/^\/pipeline\/([^/]+)\/package\/([a-f0-9]{7,40})$/);
+      if (detailMatch && detailMatch[1] && detailMatch[2] && req.method === "GET") {
+        const pipelineId = detailMatch[1];
+        const pipeline = pipelineMap.get(pipelineId);
+        if (!pipeline) return new Response("Pipeline not found", { status: 404 });
+        const pkg = findPackageByCommitPrefix(pipelineId, detailMatch[2]);
+        if (!pkg) return new Response("Package not found", { status: 404 });
         const history: any[] = [];
         for (const step of pkg.steps) {
           history.push(...getStepHistory(pkg.id, step.stepId));
         }
-        const html = renderPackageDetail(pkg, history);
+        const html = renderPackageDetail(pkg, pipeline, history);
         return new Response(html, {
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
       }
 
-      // POST /api/sync — trigger an immediate poll then redirect to dashboard
-      if (path === "/api/sync" && req.method === "POST") {
-        if (triggerPoll) {
-          await triggerPoll();
+      // GET /api/packages?pipeline=... — JSON
+      if (path === "/api/packages" && req.method === "GET") {
+        const pipelineId = url.searchParams.get("pipeline");
+        if (!pipelineId) {
+          return Response.json({ error: "pipeline query param required" }, { status: 400 });
         }
-        return new Response(null, { status: 303, headers: { Location: "/" } });
-      }
-
-      // POST /api/ingest — manual ingestion endpoint
-      if (path === "/api/ingest" && req.method === "POST") {
-        return handleIngest(req, cfg);
-      }
-
-      // GET /api/packages — JSON list
-      if (path === "/api/packages") {
-        const packages = listPackages(50);
-        return Response.json(packages);
+        return Response.json(listPackages(pipelineId, 50));
       }
 
       // GET /healthz
@@ -74,66 +95,4 @@ export function createServer(cfg: PipelineConfig, triggerPoll?: () => Promise<vo
 
   console.log(`[server] listening on http://localhost:${port}`);
   return server;
-}
-
-function findPackageByPrefix(prefix: string) {
-  const packages = listPackages(200);
-  return packages.find(p => p.id.startsWith(prefix)) ?? null;
-}
-
-async function handleIngest(req: Request, cfg: PipelineConfig): Promise<Response> {
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    return new Response("Invalid JSON", { status: 400 });
-  }
-
-  const { commit_hash, repo, branch, author, message } = body;
-  if (!commit_hash || typeof commit_hash !== "string") {
-    return new Response("commit_hash required", { status: 400 });
-  }
-
-  const existing = getPackage(commit_hash);
-  if (existing) {
-    return Response.json({ ok: true, created: false, id: commit_hash });
-  }
-
-  const gitStep = cfg.steps.find(s => s.type === "git");
-
-  upsertPackage({
-    id: commit_hash,
-    commitHash: commit_hash,
-    repoFullName: repo ?? gitStep?.repo ?? "unknown/repo",
-    branch: branch ?? gitStep?.branch ?? "main",
-    authorName: author,
-    message,
-    createdAt: now(),
-    updatedAt: now(),
-    currentStep: 0,
-  });
-
-  // Seed git step as passed
-  if (gitStep) {
-    upsertStepState(commit_hash, {
-      stepId: gitStep.id,
-      status: "passed",
-      label: commit_hash.slice(0, 7),
-      detail: message,
-      updatedAt: now(),
-      commitHash: commit_hash,
-    });
-  }
-
-  // Seed remaining steps as pending
-  for (const s of cfg.steps.filter(s => s.type !== "git")) {
-    upsertStepState(commit_hash, {
-      stepId: s.id,
-      status: "pending",
-      label: "…",
-      updatedAt: now(),
-    });
-  }
-
-  return Response.json({ ok: true, created: true, id: commit_hash });
 }
