@@ -5,7 +5,10 @@
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
-    "dev": "bun --watch run index.ts"
+    "dev": "bun --watch run index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "check": "bun run typecheck && bun run test"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.8.9",
