@@ -63,7 +63,6 @@ pipelines:
 
 Any pipeline using `flux-image`, `flux-kustomize`, or `k8s-deploy` steps requires a valid kubeconfig with a current context pointing at the target cluster. App Conveyor uses the default kubeconfig discovery (`~/.kube/config`, `KUBECONFIG` env var, or in-cluster service account).
 
-If the cluster uses a custom CA, set `NODE_EXTRA_CA_CERTS` to the certificate path, or App Conveyor will attempt to write the CA to `.kube-ca.pem` automatically.
 
 ## Environment variables
 
@@ -73,7 +72,6 @@ If the cluster uses a custom CA, set `NODE_EXTRA_CA_CERTS` to the certificate pa
 | `DB_PATH` | `conveyor.db` | Path to the SQLite database |
 | `PORT` | `3000` | HTTP server port |
 | `GITHUB_TOKEN` | — | GitHub PAT for API access (required for private repos and GHCR) |
-| `NODE_EXTRA_CA_CERTS` | — | Path to custom CA certificate for Kubernetes TLS |
 
 ## Running
 

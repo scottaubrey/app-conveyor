@@ -1,54 +1,71 @@
-import { writeFileSync } from "node:fs";
 import * as k8s from "@kubernetes/client-node";
-
-let _kc: k8s.KubeConfig | null = null;
-
-function getKubeConfig(): k8s.KubeConfig {
-  if (_kc) return _kc;
-  _kc = new k8s.KubeConfig();
-  _kc.loadFromDefault();
-  warnIfCaMissing(_kc);
-  return _kc;
-}
+import {
+  createConfiguration,
+  ResponseContext,
+  ServerConfiguration,
+  wrapHttpLibrary,
+} from "@kubernetes/client-node";
 
 /**
- * Bun reads NODE_EXTRA_CA_CERTS only at process start, so setting it in-process
- * has no effect. If it isn't already set we write the CA to .kube-ca.pem so the
- * user can add it to .env once and have it picked up on next launch.
+ * Bun's fetch implementation does not honour the https.Agent passed by
+ * @kubernetes/client-node, so the cluster CA from kubeconfig is never applied
+ * to outgoing TLS connections. Bun does support a non-standard `tls` option on
+ * fetch(), so we wrap the HTTP library to extract the cert/key/ca from the
+ * agent built by @kubernetes/client-node and pass them through that way instead.
  */
-function warnIfCaMissing(kc: k8s.KubeConfig): void {
-  if (process.env.NODE_EXTRA_CA_CERTS) return;
+function makeBunHttpLibrary() {
+  return wrapHttpLibrary({
+    async send(request) {
+      const agent = request.getAgent() as
+        | {
+            options?: {
+              ca?: Buffer;
+              cert?: Buffer;
+              key?: Buffer;
+              rejectUnauthorized?: boolean;
+            };
+          }
+        | undefined;
 
-  const cluster = kc.getCurrentCluster() as {
-    caData?: string;
-    caFile?: string;
-  } | null;
-  const caData: string | undefined = cluster?.caData;
-  const caFile: string | undefined = cluster?.caFile;
+      const response = await fetch(request.getUrl(), {
+        method: request.getHttpMethod(),
+        headers: request.getHeaders(),
+        body: request.getBody() as BodyInit | undefined,
+        signal: request.getSignal() ?? undefined,
+        tls: agent?.options
+          ? {
+              ca: agent.options.ca,
+              cert: agent.options.cert,
+              key: agent.options.key,
+              rejectUnauthorized: agent.options.rejectUnauthorized,
+            }
+          : undefined,
+      } as RequestInit);
 
-  if (caFile) {
-    console.warn(
-      `[kube] NODE_EXTRA_CA_CERTS not set. Add to .env:\n  NODE_EXTRA_CA_CERTS=${caFile}`,
-    );
-    return;
-  }
-
-  if (caData) {
-    const pem = Buffer.from(caData, "base64").toString("utf8");
-    const outPath = ".kube-ca.pem";
-    try {
-      writeFileSync(outPath, pem, { mode: 0o600 });
-      console.warn(
-        `[kube] NODE_EXTRA_CA_CERTS not set — TLS will fail.\n` +
-          `  CA cert written to ${outPath}. Add to .env:\n` +
-          `  NODE_EXTRA_CA_CERTS=${outPath}`,
+      return new ResponseContext(
+        response.status,
+        Object.fromEntries(Array.from(response.headers as unknown as Iterable<[string, string]>)),
+        {
+          text: () => response.text(),
+          binary: async () => Buffer.from(await response.arrayBuffer()),
+        },
       );
-    } catch {
-      console.warn(
-        `[kube] NODE_EXTRA_CA_CERTS not set and could not write CA to disk.`,
-      );
-    }
-  }
+    },
+  });
+}
+
+function makeApiClient<T extends k8s.ApiType>(
+  kc: k8s.KubeConfig,
+  apiClientType: k8s.ApiConstructor<T>,
+): T {
+  const cluster = kc.getCurrentCluster();
+  if (!cluster) throw new Error("No active cluster!");
+  const config = createConfiguration({
+    baseServer: new ServerConfiguration(cluster.server, {}),
+    httpApi: makeBunHttpLibrary(),
+    authMethods: { default: kc },
+  });
+  return new apiClientType(config);
 }
 
 export interface KubeClient {
@@ -60,10 +77,11 @@ let _client: KubeClient | null = null;
 
 export function getKubeClient(): KubeClient {
   if (_client) return _client;
-  const kc = getKubeConfig();
+  const kc = new k8s.KubeConfig();
+  kc.loadFromDefault();
   _client = {
-    appsV1: kc.makeApiClient(k8s.AppsV1Api),
-    customObjects: kc.makeApiClient(k8s.CustomObjectsApi),
+    appsV1: makeApiClient(kc, k8s.AppsV1Api),
+    customObjects: makeApiClient(kc, k8s.CustomObjectsApi),
   };
   return _client;
 }
