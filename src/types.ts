@@ -12,6 +12,7 @@ export type StepType =
 export interface StepConfig {
   id: string;
   type: StepType;
+  label?: string; // overrides the default column heading in the UI
   // git
   repo?: string;
   branch?: string;

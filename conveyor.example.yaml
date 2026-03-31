@@ -3,8 +3,9 @@ pipelines:
   #
   #   git → gha (build) → ghcr (image published)
   #     → gh-pr (renovate PR + e2e tests + automerge)
-  #       → flux-image (approved ImagePolicy picks up new tag)
-  #         → flux-kustomize → k8s-deploy
+  #       → ghcr (approved tag published)
+  #         → flux-image (approved ImagePolicy picks up new tag)
+  #           → flux-kustomize → k8s-deploy
   #
   - id: epp-client-staging
     name: Enhanced Preprints Client (staging)
@@ -31,6 +32,16 @@ pipelines:
         type: gh-pr
         repo: elifesciences/enhanced-preprints-testing  # repo renovate targets
         author: renovate[bot]
+        label: "e2e PR Merged"
+
+      # After the PR is merged, a CI run pushes the -approved tag to GHCR.
+      # tagPattern ensures this step only passes on that variant, not the
+      # original image pushed by the build step.
+      - id: reg-approved
+        type: ghcr
+        image: ghcr.io/elifesciences/enhanced-preprints-client
+        tagPattern: "-approved$"
+        label: "Image Approved"
 
       # ImagePolicy selects only the -approved variant of the tag
       - id: auto

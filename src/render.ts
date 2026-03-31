@@ -35,8 +35,8 @@ const STEP_TYPE_LABEL: Record<string, string> = {
   "k8s-deploy": "Deploy Ready",
 };
 
-function stepLabel(type: string): string {
-  return STEP_TYPE_LABEL[type] ?? type;
+function stepLabel(cfg: StepConfig): string {
+  return cfg.label ?? STEP_TYPE_LABEL[cfg.type] ?? cfg.type;
 }
 
 /** Derives an overall status from a package's steps for the landing page summary. */
@@ -389,7 +389,7 @@ export function renderDashboard(
   const headerCols = steps
     .map(
       (s) => `
-    <div class="belt-col-label">${stepLabel(s.type)}</div>
+    <div class="belt-col-label">${stepLabel(s)}</div>
   `,
     )
     .join("");
@@ -459,7 +459,7 @@ function renderPackageRow(
       const cls = STATUS_CLASS[state.status] ?? "pending";
       const badge = STATUS_LABEL[state.status] ?? state.status;
       const tooltip = [
-        `${stepLabel(cfg.type)} [${cfg.id}]`,
+        `${stepLabel(cfg)} [${cfg.id}]`,
         `status: ${state.status}`,
         state.detail ? `\n${state.detail}` : "",
         `\nupdated: ${state.updatedAt.slice(0, 19).replace("T", " ")}`,
@@ -534,7 +534,7 @@ export function renderPackageDetail(
 
       return `
       <section class="step-detail">
-        <h3>${escHtml(stepLabel(s.type))} <span class="badge ${statusCls}">${statusTxt}</span>${link ? ` <a class="breadcrumb" href="${link}" target="_blank" rel="noopener" style="font-size:0.75rem;font-weight:400">↗ GitHub</a>` : ""}</h3>
+        <h3>${escHtml(stepLabel(s))} <span class="badge ${statusCls}">${statusTxt}</span>${link ? ` <a class="breadcrumb" href="${link}" target="_blank" rel="noopener" style="font-size:0.75rem;font-weight:400">↗ GitHub</a>` : ""}</h3>
         <p class="detail-text">${escHtml(state?.detail ?? "")}</p>
         ${
           hist.length > 0
