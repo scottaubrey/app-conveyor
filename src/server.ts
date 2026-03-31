@@ -33,7 +33,7 @@ export function createServer(
         });
       }
 
-      // POST /pipeline/:pipelineId/sync — trigger poll, redirect to dashboard
+      // POST /pipeline/:pipelineId/sync — trigger poll, redirect to dashboard or caller
       const syncMatch = path.match(/^\/pipeline\/([^/]+)\/sync$/);
       if (syncMatch?.[1] && req.method === "POST") {
         const pipelineId = syncMatch[1];
@@ -41,9 +41,12 @@ export function createServer(
         if (!trigger)
           return new Response("Pipeline not found", { status: 404 });
         await trigger();
+        const formData = await req.formData().catch(() => null);
+        const redirect =
+          formData?.get("redirect")?.toString() ?? `/pipeline/${pipelineId}`;
         return new Response(null, {
           status: 303,
-          headers: { Location: `/pipeline/${pipelineId}` },
+          headers: { Location: redirect },
         });
       }
 

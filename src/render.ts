@@ -3,6 +3,7 @@ import type {
   PipelineConfig,
   StepConfig,
   StepHistoryEntry,
+  StepState,
 } from "./types";
 import { relativeTime } from "./util";
 
@@ -529,10 +530,11 @@ export function renderPackageDetail(
 
       const statusCls = state ? (STATUS_CLASS[state.status] ?? "") : "pending";
       const statusTxt = state?.status ?? "pending";
+      const link = stepGithubLink(s, state);
 
       return `
       <section class="step-detail">
-        <h3>${escHtml(stepLabel(s.type))} <span class="badge ${statusCls}">${statusTxt}</span></h3>
+        <h3>${escHtml(stepLabel(s.type))} <span class="badge ${statusCls}">${statusTxt}</span>${link ? ` <a class="breadcrumb" href="${link}" target="_blank" rel="noopener" style="font-size:0.75rem;font-weight:400">↗ GitHub</a>` : ""}</h3>
         <p class="detail-text">${escHtml(state?.detail ?? "")}</p>
         ${
           hist.length > 0
@@ -563,8 +565,12 @@ export function renderPackageDetail(
       <span style="color:var(--muted);font-weight:400"> / </span>
       <a class="breadcrumb" href="/pipeline/${escHtml(pipeline.id)}">${escHtml(pipeline.name)}</a>
       <span style="color:var(--muted);font-weight:400"> / </span>
-      ${pkg.commitHash.slice(0, 7)}
+      <a class="breadcrumb" href="https://github.com/${escHtml(pkg.repoFullName)}/commit/${pkg.commitHash}" target="_blank" rel="noopener">${pkg.commitHash.slice(0, 7)}</a>
     </h1>
+    <form method="POST" action="/pipeline/${escHtml(pipeline.id)}/sync" style="margin:0">
+      <input type="hidden" name="redirect" value="/pipeline/${escHtml(pipeline.id)}/package/${escHtml(pkg.commitHash.slice(0, 7))}">
+      <button class="sync-btn" type="submit">Sync now</button>
+    </form>
   </header>
   <div style="margin-bottom:1rem">
     <div style="color:var(--text);font-size:0.8rem;margin-bottom:0.25rem">${escHtml(pkg.message ?? "")}</div>
@@ -575,6 +581,33 @@ export function renderPackageDetail(
   ${rows}
 </body>
 </html>`;
+}
+
+function stepGithubLink(
+  cfg: StepConfig,
+  state: StepState | undefined,
+): string | null {
+  if (!state) return null;
+  const repo = cfg.repo ?? "";
+  switch (cfg.type) {
+    case "gha":
+      if (state.ghaRunId && repo)
+        return `https://github.com/${repo}/actions/runs/${state.ghaRunId}`;
+      break;
+    case "gh-pr": {
+      const prNum = state.label.match(/^#(\d+)$/)?.[1];
+      if (prNum && repo) return `https://github.com/${repo}/pull/${prNum}`;
+      break;
+    }
+    case "ghcr": {
+      // link to the package version list; image is e.g. "ghcr.io/org/repo"
+      const image = cfg.image?.replace(/^ghcr\.io\//, "") ?? "";
+      if (image)
+        return `https://github.com/${image}/pkgs/container/${image.split("/").at(-1)}`;
+      break;
+    }
+  }
+  return null;
 }
 
 function escHtml(s: string): string {
