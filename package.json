@@ -8,6 +8,7 @@
     "dev": "bun --watch run index.ts"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^20.8.9",
     "@types/bun": "latest",
     "@types/node": "^25.5.0"
   },

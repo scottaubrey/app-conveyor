@@ -1,5 +1,4 @@
-import { test, expect, beforeEach } from "bun:test";
-import { Database } from "bun:sqlite";
+import { test, expect } from "bun:test";
 
 // Override DB_PATH to use an in-memory database for tests
 process.env.DB_PATH = ":memory:";
@@ -8,9 +7,12 @@ process.env.DB_PATH = ":memory:";
 const { getDb, upsertPackage, upsertStepState, getPackage, listPackages, getStepHistory } =
   await import("../db");
 
+const PIPELINE = "test-pipeline";
+
 function freshPkg(id = "abc1234abc1234abc1234abc1234abc1234abc123") {
   return {
     id,
+    pipelineId: PIPELINE,
     commitHash: id,
     repoFullName: "my-org/my-app",
     branch: "main",
@@ -34,7 +36,7 @@ test("upsertPackage is idempotent", () => {
   const id = "aaaa000000000000000000000000000000000001";
   upsertPackage(freshPkg(id));
   upsertPackage(freshPkg(id)); // second call should not throw
-  const all = listPackages();
+  const all = listPackages(PIPELINE);
   expect(all.filter(p => p.id === id).length).toBe(1);
 });
 
@@ -81,7 +83,7 @@ test("listPackages returns most recent first", () => {
   upsertPackage({ ...freshPkg(ids[0]), createdAt: new Date(base.getTime() + 1000).toISOString(), updatedAt: new Date().toISOString() });
   upsertPackage({ ...freshPkg(ids[1]), createdAt: new Date(base.getTime() + 2000).toISOString(), updatedAt: new Date().toISOString() });
 
-  const list = listPackages();
+  const list = listPackages(PIPELINE);
   const idxA = list.findIndex(p => p.id === ids[0]);
   const idxB = list.findIndex(p => p.id === ids[1]);
   expect(idxB).toBeLessThan(idxA); // newer first
