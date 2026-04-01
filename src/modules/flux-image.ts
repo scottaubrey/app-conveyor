@@ -74,8 +74,15 @@ export async function syncFluxImage(
       };
     }
 
-    // Check if the policy has selected our tag (or a tag containing our hash)
-    const tagMatches = latestTag === imageTag || latestTag.includes(imageTag);
+    // Check if the policy has selected our tag (or a tag containing our hash).
+    // imageTag may be a full 40-char SHA while latestTag embeds only the short
+    // 7-char prefix (e.g. "g0d0db12" in a trunkver tag), so also check the
+    // short prefix.
+    const shortHash = imageTag.slice(0, 7);
+    const tagMatches =
+      latestTag === imageTag ||
+      latestTag.includes(imageTag) ||
+      latestTag.includes(shortHash);
 
     return {
       ...base,
