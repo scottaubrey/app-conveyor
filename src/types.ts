@@ -32,6 +32,7 @@ export interface StepConfig {
   // k8s-deploy
   namespace?: string;
   deployment?: string;
+  kind?: "Deployment" | "StatefulSet"; // defaults to Deployment
 }
 
 export interface PipelineConfig {

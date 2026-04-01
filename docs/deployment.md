@@ -19,7 +19,7 @@ access to:
 
 | Group | Resource | Why |
 |---|---|---|
-| `apps` | `deployments` | `k8s-deploy` step — checks rollout status |
+| `apps` | `deployments`, `statefulsets` | `k8s-deploy` step — checks rollout status |
 | `image.toolkit.fluxcd.io` | `imagepolicies` | `flux-image` step — checks selected tag |
 | `image.toolkit.fluxcd.io` | `imageupdateautomations` | `flux-kustomize` step — reads last push time |
 | `kustomize.toolkit.fluxcd.io` | `kustomizations` | `flux-kustomize` step — checks reconciliation status |
@@ -35,7 +35,7 @@ metadata:
   name: app-conveyor
 rules:
   - apiGroups: ["apps"]
-    resources: ["deployments"]
+    resources: ["deployments", "statefulsets"]
     verbs: ["get"]
   - apiGroups: ["image.toolkit.fluxcd.io"]
     resources: ["imagepolicies", "imageupdateautomations"]

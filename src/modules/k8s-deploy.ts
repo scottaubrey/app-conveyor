@@ -27,20 +27,30 @@ export async function syncK8sDeploy(
   }
 
   const namespace = cfg.namespace ?? "default";
+  const kind = cfg.kind ?? "Deployment";
 
   try {
     const client = getKubeClient();
-    const appsV1 = client.appsV1;
 
-    const deploy = await appsV1.readNamespacedDeployment({
-      name: deployName,
-      namespace,
-    });
+    const resource =
+      kind === "StatefulSet"
+        ? await client.appsV1.readNamespacedStatefulSet({
+            name: deployName,
+            namespace,
+          })
+        : await client.appsV1.readNamespacedDeployment({
+            name: deployName,
+            namespace,
+          });
 
-    const desired = deploy.spec?.replicas ?? 1;
-    const total = deploy.status?.replicas ?? 0;
-    const updated = deploy.status?.updatedReplicas ?? 0;
-    const available = deploy.status?.availableReplicas ?? 0;
+    const desired = resource.spec?.replicas ?? 1;
+    const total = resource.status?.replicas ?? 0;
+    const updated = resource.status?.updatedReplicas ?? 0;
+    // Deployments use availableReplicas; StatefulSets use readyReplicas
+    const ready =
+      kind === "StatefulSet"
+        ? (resource.status?.readyReplicas ?? 0)
+        : (resource.status?.availableReplicas ?? 0);
 
     if (!imageDigest) {
       return {
@@ -51,11 +61,9 @@ export async function syncK8sDeploy(
       };
     }
 
-    // spec.template.spec.containers[].image confirms this Deployment targets our image.
-    // We still check the spec (not pod status) for the image reference — but we use
-    // updatedReplicas/availableReplicas to confirm the rollout has actually completed.
     const specImages =
-      deploy.spec?.template?.spec?.containers?.map((c) => c.image ?? "") ?? [];
+      resource.spec?.template?.spec?.containers?.map((c) => c.image ?? "") ??
+      [];
 
     const imageMatches = (img: string) =>
       img.includes(imageDigest) ||
@@ -66,13 +74,10 @@ export async function syncK8sDeploy(
 
     // Rollout is complete when:
     //   - all pods have been updated to the new template (updatedReplicas >= desired)
-    //   - all updated pods are available (availableReplicas >= desired)
+    //   - all updated pods are ready (ready >= desired)
     //   - no old pods are still terminating (total <= desired)
     const rolloutComplete =
-      updated >= desired &&
-      available >= desired &&
-      total <= desired &&
-      desired > 0;
+      updated >= desired && ready >= desired && total <= desired && desired > 0;
     const passed = rolloutComplete && imageConfirmed;
 
     return {
@@ -80,8 +85,8 @@ export async function syncK8sDeploy(
       status: passed ? "passed" : "running",
       label: `${updated}/${desired}`,
       detail: [
-        `${deployName}: ${updated}/${desired} updated`,
-        `available: ${available}`,
+        `${kind}/${deployName}: ${updated}/${desired} updated`,
+        `ready: ${ready}`,
         `total: ${total}`,
         `images: ${specImages.join(", ")}`,
         imageConfirmed
@@ -95,7 +100,7 @@ export async function syncK8sDeploy(
         ...base,
         status: "pending",
         label: "waiting",
-        detail: `Deployment ${deployName} not found`,
+        detail: `${kind} ${deployName} not found`,
       };
     }
     return { ...base, status: "failed", label: "err", detail: errorMessage(e) };
