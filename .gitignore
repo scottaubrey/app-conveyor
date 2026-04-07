@@ -37,3 +37,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 conveyor.db*
 conveyor.yaml
 .kube-ca.pem*
+
+# Claude Code local settings
+.claude/

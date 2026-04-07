@@ -108,3 +108,11 @@ bun --hot ./index.ts
 ```
 
 For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+
+## Kubernetes TLS
+
+Bun's `fetch()` ignores `https.Agent`, so the standard Node.js mechanism for injecting CA certs does not work. This is already solved in `src/kube.ts` using `wrapHttpLibrary` from `@kubernetes/client-node`, which extracts the CA/cert/key from the agent and passes them via Bun's non-standard `tls` fetch option. Do not reach for `NODE_EXTRA_CA_CERTS` or process re-exec as a solution to Kubernetes TLS issues.
+
+## GitHub API
+
+Fine-grained PATs cannot access organisation-owned packages via the GitHub Packages API — this is a GitHub platform limitation. A classic PAT with `read:packages` and `repo` scopes is required for any pipeline that uses the `ghcr` step against org-owned images.
