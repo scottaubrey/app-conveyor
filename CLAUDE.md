@@ -1,113 +1,56 @@
+# App Conveyor
 
-Default to using Bun instead of Node.js.
+A deployment pipeline tracker for GitOps workflows. It monitors commits from a source repository through each stage of delivery — CI build, container image push, Flux CD reconciliation, Kubernetes rollout — and surfaces the status of every commit in a web UI.
+
+## Key concepts
+
+- **Pipeline** — a named sequence of steps defined in `conveyor.yaml`
+- **Package** — a tracked commit moving through a pipeline, identified by `{pipelineId}:{commitHash}`
+- **Step** — a single stage in a pipeline (git, gha, ghcr, gh-pr, flux-image, flux-kustomize, k8s-deploy)
+- **Upstream** — outputs from passed steps (commitHash, imageTag, imageDigest, etc.) propagated to downstream steps
+
+## Architecture
+
+| File | Purpose |
+|---|---|
+| `index.ts` | Entry point — loads config, starts engines, starts server |
+| `src/engine.ts` | Polling loop — discovers commits, advances packages through steps |
+| `src/db.ts` | SQLite persistence — packages, step states, step history |
+| `src/server.ts` | HTTP server — UI routes and sync endpoints |
+| `src/render.ts` | Server-side HTML rendering |
+| `src/config.ts` | YAML config loading |
+| `src/kube.ts` | Kubernetes client with Bun TLS workaround |
+| `src/modules/` | One file per step type |
+
+The engine polls each pipeline on a configurable interval. Each poll discovers new commits (git step) and advances all in-progress packages by calling the appropriate module for each step in sequence. A step returning `pending` or `running` stops advancement for that package until the next poll.
+
+## Bun
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
-
-## APIs
-
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
+- Use `bun test` instead of jest or vitest
+- Use `bun install` instead of npm/yarn/pnpm
+- Use `bun run <script>` instead of npm/yarn/pnpm run
+- Use `bunx <package>` instead of npx
+- Bun automatically loads `.env` — don't use dotenv
+- `Bun.serve()` for the HTTP server — don't use express
+- `bun:sqlite` for SQLite — don't use better-sqlite3
+- `Bun.file` instead of `node:fs` readFile/writeFile
 
 ## Testing
 
-Use `bun test` to run tests. After any code change, run `bun run check` which runs `biome check`, `tsc --noEmit`, and `bun test`. All three must pass before a task is considered complete.
+Run `bun run check` after any code change. This runs `biome check`, `tsc --noEmit`, and `bun test`. All three must pass before a task is considered complete.
 
-```ts#index.test.ts
+```ts
 import { test, expect } from "bun:test";
 
-test("hello world", () => {
+test("example", () => {
   expect(1).toBe(1);
 });
 ```
 
 ## UI
 
-The frontend is server-side rendered HTML only. Do not add client-side JavaScript — no `<script>` tags, no inline event handlers, no `fetch()` calls from the browser. Use `<form method="POST">` for actions and HTTP 303 redirects from the server.
-
-## Frontend
-
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
-
-Server:
-
-```ts#index.ts
-import index from "./index.html"
-
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
-
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+The frontend is server-side rendered HTML only — plain string templates in `src/render.ts`. Do not add client-side JavaScript: no `<script>` tags, no inline event handlers, no `fetch()` from the browser. Use `<form method="POST">` for actions and HTTP 303 redirects from the server.
 
 ## Kubernetes TLS
 
@@ -116,3 +59,7 @@ Bun's `fetch()` ignores `https.Agent`, so the standard Node.js mechanism for inj
 ## GitHub API
 
 Fine-grained PATs cannot access organisation-owned packages via the GitHub Packages API — this is a GitHub platform limitation. A classic PAT with `read:packages` and `repo` scopes is required for any pipeline that uses the `ghcr` step against org-owned images.
+
+## Known gotcha: image tag hash matching
+
+Image tags often embed the commit hash with a `g` prefix (trunkver format: `{timestamp}-g{hash}-{runId}`). A segment-based `startsWith(hash)` check will never match. Use `includes(shortHash)` where `shortHash = imageTag.slice(0, 7)`. This affects ghcr tag matching, flux-image comparison, and k8s-deploy image confirmation — all already handled, but watch for it in any new tag comparison code.
