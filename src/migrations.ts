@@ -67,6 +67,13 @@ const migrations: Migration[] = [
     version: 2,
     up: (db) => db.run("ALTER TABLE packages ADD COLUMN config_snapshot TEXT"),
   },
+  {
+    version: 3,
+    up: (db) =>
+      db.run(
+        "ALTER TABLE packages ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+      ),
+  },
 ];
 
 export function runMigrations(db: Database): void {

@@ -27,6 +27,7 @@ function freshPkg(id = "abc1234abc1234abc1234abc1234abc1234abc123") {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     currentStep: 0,
+    status: "active" as const,
   };
 }
 

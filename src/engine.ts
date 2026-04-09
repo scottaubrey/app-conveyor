@@ -5,7 +5,7 @@
 import {
   findPackageByCommitPrefix,
   getPackage,
-  listPackages,
+  listActivePackages,
   upsertPackage,
   upsertStepState,
 } from "./db";
@@ -103,6 +103,7 @@ export class Engine {
           updatedAt: now(),
           currentStep: 0,
           configSnapshot: this.cfg,
+          status: "active",
         };
         upsertPackage(pkg);
 
@@ -126,10 +127,8 @@ export class Engine {
   // ─── Step 2: advance all packages through remaining steps ────────────────
 
   private async advancePackages() {
-    const packages = listPackages(this.cfg.id, 100);
+    const packages = listActivePackages(this.cfg.id);
     for (const pkg of packages) {
-      const allPassed = pkg.steps.every((s) => s.status === "passed");
-      if (allPassed) continue;
       await this.advancePackage(pkg);
     }
   }
@@ -140,6 +139,9 @@ export class Engine {
     const upstream = this.gatherUpstream(
       pkg.steps.filter((s) => s.status === "passed"),
     );
+
+    // "waiting" = still in progress; "failed" = terminal; null = all passed
+    let breakReason: "waiting" | "failed" | null = null;
 
     for (const stepCfg of pipelineCfg.steps) {
       if (stepCfg.type === "git") continue;
@@ -184,11 +186,20 @@ export class Engine {
         console.log(
           `[engine:${this.cfg.id}] ${pkg.commitHash.slice(0, 7)} stopped at [${stepCfg.id}]: failed`,
         );
+        breakReason = "failed";
         break;
       }
       if (newState.status === "pending" || newState.status === "running") {
+        breakReason = "waiting";
         break;
       }
+    }
+
+    const isComplete = breakReason !== "waiting";
+    if (isComplete && pkg.status !== "complete") {
+      console.log(
+        `[engine:${this.cfg.id}] ${pkg.commitHash.slice(0, 7)} complete (${breakReason ?? "all passed"})`,
+      );
     }
 
     upsertPackage({
@@ -202,6 +213,7 @@ export class Engine {
       createdAt: pkg.createdAt,
       updatedAt: now(),
       currentStep: pkg.currentStep,
+      status: isComplete ? "complete" : "active",
     });
   }
 

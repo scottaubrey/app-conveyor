@@ -34,6 +34,7 @@ function seedPackage() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     currentStep: 0,
+    status: "active",
   });
   upsertStepState(PKG_ID, {
     stepId: "src",

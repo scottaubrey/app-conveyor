@@ -20,6 +20,7 @@ interface PackageRow {
   updated_at: string;
   current_step: number;
   config_snapshot: string | null;
+  status: string;
 }
 
 interface StepStateRow {
@@ -54,13 +55,14 @@ export function upsertPackage(pkg: Omit<Package, "steps">): void {
   const db = getDb();
   db.run(
     `
-    INSERT INTO packages (id, pipeline_id, commit_hash, repo, branch, author_name, message, created_at, updated_at, current_step, config_snapshot)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO packages (id, pipeline_id, commit_hash, repo, branch, author_name, message, created_at, updated_at, current_step, config_snapshot, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       updated_at      = excluded.updated_at,
       current_step    = excluded.current_step,
       author_name     = excluded.author_name,
-      message         = excluded.message
+      message         = excluded.message,
+      status          = excluded.status
   `,
     [
       pkg.id,
@@ -74,6 +76,7 @@ export function upsertPackage(pkg: Omit<Package, "steps">): void {
       pkg.updatedAt,
       pkg.currentStep,
       pkg.configSnapshot ? JSON.stringify(pkg.configSnapshot) : null,
+      pkg.status,
     ],
   );
 }
@@ -170,6 +173,16 @@ export function listPackages(pipelineId: string, limit = 50): Package[] {
   return rows.map((r) => hydrate(db, r));
 }
 
+export function listActivePackages(pipelineId: string, limit = 100): Package[] {
+  const db = getDb();
+  const rows = db
+    .query<PackageRow, [string, number]>(
+      "SELECT * FROM packages WHERE pipeline_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT ?",
+    )
+    .all(pipelineId, limit);
+  return rows.map((r) => hydrate(db, r));
+}
+
 function hydrate(db: Database, row: PackageRow): Package {
   const steps = db
     .query<StepStateRow, [string]>(
@@ -192,6 +205,7 @@ function hydrate(db: Database, row: PackageRow): Package {
     configSnapshot: row.config_snapshot
       ? JSON.parse(row.config_snapshot)
       : undefined,
+    status: row.status as Package["status"],
     steps,
   };
 }
@@ -275,10 +289,13 @@ export function resetPackage(
 
   if (newSnapshot) {
     db.run(
-      "UPDATE packages SET config_snapshot = ?, updated_at = ? WHERE id = ?",
+      "UPDATE packages SET config_snapshot = ?, status = 'active', updated_at = ? WHERE id = ?",
       [JSON.stringify(newSnapshot), ts, packageId],
     );
   } else {
-    db.run("UPDATE packages SET updated_at = ? WHERE id = ?", [ts, packageId]);
+    db.run(
+      "UPDATE packages SET status = 'active', updated_at = ? WHERE id = ?",
+      [ts, packageId],
+    );
   }
 }

@@ -26,6 +26,7 @@ function makePkg(overrides: Partial<Package> = {}): Package {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     currentStep: 1,
+    status: "active",
     steps: [
       {
         stepId: "src",
