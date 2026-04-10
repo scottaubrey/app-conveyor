@@ -10,7 +10,6 @@ const {
   getPackage,
   listPackages,
   getStepHistory,
-  listActivePackages,
   resetPackage,
   supersedeBefore,
 } = await import("../db");

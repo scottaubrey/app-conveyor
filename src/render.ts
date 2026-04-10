@@ -586,7 +586,9 @@ export function renderPackageDetail(
       <span style="color:var(--muted);font-weight:400"> / </span>
       <a class="breadcrumb" href="https://github.com/${escHtml(pkg.repoFullName)}/commit/${pkg.commitHash}" target="_blank" rel="noopener">${pkg.commitHash.slice(0, 7)}</a>
     </h1>
-    <div style="display:flex;gap:0.5rem;align-items:center;margin:0">
+    ${
+      pkg.status !== "superseded"
+        ? `<div style="display:flex;gap:0.5rem;align-items:center;margin:0">
       <form method="POST" action="/pipeline/${escHtml(pipeline.id)}/package/${escHtml(pkg.commitHash.slice(0, 7))}/sync" style="margin:0">
         <button class="sync-btn" type="submit">Sync now</button>
       </form>
@@ -601,7 +603,9 @@ export function renderPackageDetail(
           </form>
         </div>
       </details>
-    </div>
+    </div>`
+        : ""
+    }
   </header>
   <div style="margin-bottom:1rem">
     <div style="color:var(--text);font-size:0.8rem;margin-bottom:0.25rem">${escHtml(pkg.message ?? "")}</div>

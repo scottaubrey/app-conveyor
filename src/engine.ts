@@ -56,6 +56,12 @@ export class Engine {
       );
       return;
     }
+    if (pkg.status === "superseded") {
+      console.log(
+        `[engine:${this.cfg.id}] pollPackage: ${pkg.commitHash.slice(0, 7)} is superseded — skipping`,
+      );
+      return;
+    }
     console.log(
       `[engine:${this.cfg.id}] pollPackage ${pkg.commitHash.slice(0, 7)} at ${new Date().toISOString()}`,
     );

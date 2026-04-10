@@ -29,6 +29,8 @@ export function createServer(
     if (!pipeline) return new Response("Pipeline not found", { status: 404 });
     const pkg = findPackageByCommitPrefix(pipelineId, commitId);
     if (!pkg) return new Response("Package not found", { status: 404 });
+    if (pkg.status === "superseded")
+      return new Response("Cannot reset a superseded package", { status: 409 });
     const effectiveCfg = pkg.configSnapshot ?? pipeline;
     const gitStepIds = effectiveCfg.steps
       .filter((s) => s.type === "git")
