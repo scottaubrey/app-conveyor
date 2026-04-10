@@ -156,7 +156,7 @@ export async function syncFluxKustomize(
 
       let status: StepState["status"];
       if (readyStatus === "True" && pushSatisfied) status = "passed";
-      else if (readyStatus === "False") status = "failed";
+      else if (readyStatus === "False" && pushApplied) status = "failed";
       else status = "running";
 
       return {
