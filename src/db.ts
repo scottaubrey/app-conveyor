@@ -304,6 +304,30 @@ export function supersedeBefore(pipelineId: string): number {
     );
   }
 
+  // Repair invariant: already-superseded packages must not have pending/running
+  // steps. This handles any race conditions that slipped through (e.g. the
+  // migration ran while the package was still active).
+  const orphaned = db
+    .query<{ package_id: string; step_id: string }, [string]>(
+      `SELECT ss.package_id, ss.step_id
+       FROM step_states ss
+       JOIN packages p ON p.id = ss.package_id
+       WHERE p.pipeline_id = ? AND p.status = 'superseded'
+         AND ss.status IN ('pending', 'running')`,
+    )
+    .all(pipelineId);
+
+  for (const { package_id, step_id } of orphaned) {
+    db.run(
+      "UPDATE step_states SET status = 'skipped', label = '–', detail = ?, updated_at = ? WHERE package_id = ? AND step_id = ?",
+      [detail, ts, package_id, step_id],
+    );
+    db.run(
+      "INSERT INTO step_history (package_id, step_id, status, label, detail, recorded_at) VALUES (?, ?, 'skipped', '–', ?, ?)",
+      [package_id, step_id, detail, ts],
+    );
+  }
+
   return stale.length;
 }
 
