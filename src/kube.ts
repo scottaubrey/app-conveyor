@@ -171,7 +171,9 @@ export function startKubeWatch(
         }
       }
     } finally {
-      reader.cancel();
+      // reader.cancel() returns a Promise; if the stream already errored the
+      // promise rejects. Swallow it — the original error is already handled.
+      await reader.cancel().catch(() => {});
     }
   })().catch(onDone);
 }
