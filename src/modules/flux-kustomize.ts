@@ -46,6 +46,7 @@ export async function syncFluxKustomize(
   cfg: StepConfig,
   commitHash: string,
   imageTag: string,
+  upstreamPushCommit?: string,
 ): Promise<StepState> {
   const base: Omit<StepState, "status" | "label" | "detail"> = {
     stepId: cfg.id,
@@ -69,10 +70,12 @@ export async function syncFluxKustomize(
     const customObjects = client.customObjects;
 
     // ── 1. ImageUpdateAutomation (optional) ──────────────────────────────────
+    // If flux-image already resolved the push commit, use it directly and skip
+    // the automation query — flux-image is the authoritative source for this.
     let lastPushTime: Date | null = null;
-    let lastPushCommit: string | undefined;
+    let lastPushCommit: string | undefined = upstreamPushCommit;
 
-    if (cfg.automation) {
+    if (cfg.automation && !upstreamPushCommit) {
       try {
         const automation = (await customObjects.getNamespacedCustomObject({
           group: "image.toolkit.fluxcd.io",
@@ -132,15 +135,19 @@ export async function syncFluxKustomize(
       }
 
       // Guard: push must be for our image (or newer), not a stale previous push.
-      const imageBuiltAt = parseTagTimestamp(imageTag);
-      if (imageBuiltAt && lastPushTime < imageBuiltAt) {
-        return {
-          ...base,
-          status: "running",
-          label: lastPushCommit.slice(0, 7),
-          detail: `${cfg.automation}: waiting for push (last: ${lastPushTime.toISOString()} < image built: ${imageBuiltAt.toISOString()})`,
-          syncRevision: lastAppliedRevision,
-        };
+      // Skip when using the upstream push commit — flux-image already verified
+      // the policy matched before resolving it.
+      if (!upstreamPushCommit) {
+        const imageBuiltAt = parseTagTimestamp(imageTag);
+        if (imageBuiltAt && lastPushTime && lastPushTime < imageBuiltAt) {
+          return {
+            ...base,
+            status: "running",
+            label: lastPushCommit.slice(0, 7),
+            detail: `${cfg.automation}: waiting for push (last: ${lastPushTime.toISOString()} < image built: ${imageBuiltAt.toISOString()})`,
+            syncRevision: lastAppliedRevision,
+          };
+        }
       }
 
       // Pass if the kustomization has applied the exact push commit, OR if it

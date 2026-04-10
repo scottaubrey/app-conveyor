@@ -266,7 +266,12 @@ export class Engine {
       case "flux-image":
         return syncFluxImage(cfg, imageTag, imageDigest);
       case "flux-kustomize":
-        return syncFluxKustomize(cfg, commitHash, imageTag);
+        return syncFluxKustomize(
+          cfg,
+          commitHash,
+          imageTag,
+          upstream.syncRevision,
+        );
       case "k8s-deploy":
         return syncK8sDeploy(cfg, imageDigest, imageTag);
       default:
