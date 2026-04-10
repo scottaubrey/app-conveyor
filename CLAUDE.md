@@ -29,6 +29,8 @@ A deployment pipeline tracker for GitOps workflows. It monitors commits from a s
 
 The engine polls each pipeline on a configurable interval. Each poll discovers new commits (git step) and advances all in-progress packages by calling the appropriate module for each step in sequence. A step returning `pending` or `running` stops advancement for that package until the next poll.
 
+At the end of each poll, `supersedeBefore()` runs: it finds the newest `complete` package that has no failed steps (i.e. fully deployed), then marks all older `active` packages as `superseded`. Their in-progress steps are set to `skipped` and they are removed from the active polling set permanently. This prevents packages that will never deploy from looping indefinitely.
+
 ## Database migrations
 
 Schema changes go in `src/migrations.ts` as numbered entries in the `migrations` array. Rules:
@@ -108,6 +110,15 @@ When changing `src/schemas.ts`, the full workflow is:
 
 - **`exclusiveMinimum`** — Zod v4's `.toJSONSchema()` emits JSON Schema 2020-12 (`exclusiveMinimum: <number>`), but K8s CRDs require OpenAPI 3.0 (`exclusiveMinimum: true` + `minimum: <number>`). Avoid `.positive()` and `.gt(n)` on integer fields; use `.min(n+1)` instead, which generates a plain `minimum` constraint that K8s accepts.
 - **`additionalProperties` + `properties`** — K8s structural schemas forbid both at the same level. `gen-crds.ts` strips all `additionalProperties` after generation. Unknown fields are still rejected — K8s uses strict decoding for CRDs, so unknown fields cause a `BadRequest` error rather than being silently pruned.
+
+## Known gotcha: flux-kustomize transient failures
+
+When a Flux Kustomization has `Ready=False`, the reason matters:
+
+- `reason: DependencyNotReady` — a sibling Kustomization isn't ready yet. Always transient; return `running` regardless of whether the push commit has been applied. Do not mark `failed`.
+- Any other reason — return `failed` only if `pushApplied` is true (i.e. `lastAppliedRevision` contains the push commit). If we haven't confirmed the push was applied, the failure may be unrelated — keep as `running`.
+
+The distinction matters because `failed` is a terminal state for a package: the engine stops re-evaluating it and a manual reset is required. Treating transient failures as terminal causes packages to get permanently stuck.
 
 ## Known gotcha: image tag hash matching
 

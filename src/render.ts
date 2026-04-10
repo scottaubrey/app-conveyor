@@ -15,6 +15,7 @@ const STATUS_CLASS: Record<string, string> = {
   running: "running",
   pending: "pending",
   skipped: "skipped",
+  superseded: "superseded",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -23,6 +24,7 @@ const STATUS_LABEL: Record<string, string> = {
   running: "Run",
   pending: "Wait",
   skipped: "Skip",
+  superseded: "Old",
 };
 
 const STEP_TYPE_LABEL: Record<string, string> = {
@@ -41,6 +43,7 @@ function stepLabel(cfg: StepConfig): string {
 
 /** Derives an overall status from a package's steps for the landing page summary. */
 function packageOverallStatus(pkg: Package): string {
+  if (pkg.status === "superseded") return "superseded";
   const statuses = pkg.steps.map((s) => s.status);
   if (statuses.every((s) => s === "passed" || s === "skipped")) return "passed";
   if (statuses.some((s) => s === "failed")) return "failed";
@@ -62,6 +65,7 @@ const CSS = `
   --running: #d29922;
   --pending: #388bfd;
   --skipped: #6e7681;
+  --superseded: #6e4f9e;
   font-size: 13px;
 }
 
@@ -160,7 +164,8 @@ header .refresh-hint { margin-left: auto; color: var(--muted); font-size: 0.75re
 .status-dot.failed  { background: var(--failed); }
 .status-dot.running { background: var(--running); }
 .status-dot.pending { background: var(--pending); }
-.status-dot.skipped { background: var(--skipped); }
+.status-dot.skipped    { background: var(--skipped); }
+.status-dot.superseded { background: var(--superseded); }
 
 /* ── Belt header (step column labels) ── */
 .belt-header {
@@ -272,7 +277,8 @@ header .refresh-hint { margin-left: auto; color: var(--muted); font-size: 0.75re
 .failed .step-badge  { background: rgba(248,81,73,0.15);   border-color: var(--failed);  color: var(--failed);  }
 .running .step-badge { background: rgba(210,153,34,0.15);  border-color: var(--running); color: var(--running); }
 .pending .step-badge { background: rgba(56,139,253,0.12);  border-color: var(--pending); color: var(--pending); }
-.skipped .step-badge { background: transparent;            border-color: var(--skipped); color: var(--skipped); }
+.skipped    .step-badge { background: transparent; border-color: var(--skipped);    color: var(--skipped);    }
+.superseded .step-badge { background: transparent; border-color: var(--superseded); color: var(--superseded); }
 
 /* Active cell highlight */
 .step-cell.active-step::after {

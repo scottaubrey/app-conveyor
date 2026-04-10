@@ -121,6 +121,76 @@ test("engine skips already-passed steps", async () => {
   expect(fetchCalled).toBe(false);
 });
 
+test("advancePackages supersedes older active packages once a newer one fully passes", async () => {
+  // Older package — active, stuck at ci step, created in the past.
+  const OLD_SHA = "ffff000000000000000000000000000000000001";
+  const OLD_PKG = `${PIPELINE}:${OLD_SHA}`;
+  upsertPackage({
+    id: OLD_PKG,
+    pipelineId: PIPELINE,
+    commitHash: OLD_SHA,
+    repoFullName: "my-org/app",
+    branch: "main",
+    createdAt: "2000-01-01T00:00:00.000Z",
+    updatedAt: "2000-01-01T00:00:00.000Z",
+    currentStep: 0,
+    status: "active",
+  });
+  upsertStepState(OLD_PKG, {
+    stepId: "src",
+    status: "passed",
+    label: "ffff000",
+    updatedAt: "2000-01-01T00:00:00.000Z",
+    commitHash: OLD_SHA,
+  });
+  upsertStepState(OLD_PKG, {
+    stepId: "ci",
+    status: "running",
+    label: "…",
+    updatedAt: "2000-01-01T00:00:00.000Z",
+  });
+
+  // Newer package — will complete all steps in this poll.
+  seedPackage();
+
+  // GHA: return in_progress for the old package's SHA, success for the new one.
+  globalThis.fetch = mock(async (url: string) => {
+    if (String(url).includes("/actions/workflows/")) {
+      if (String(url).includes(OLD_SHA.slice(0, 7))) {
+        return new Response(
+          JSON.stringify({ workflow_runs: [{ id: 1, status: "in_progress" }] }),
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          workflow_runs: [
+            { id: 42, status: "completed", conclusion: "success" },
+          ],
+        }),
+      );
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as unknown as typeof globalThis.fetch;
+
+  const engine = new Engine(cfg);
+  await (
+    engine as unknown as { advancePackages(): Promise<void> }
+  ).advancePackages();
+
+  // Newer package fully passed → complete.
+  const newPkg = getPackage(PKG_ID);
+  if (!newPkg) throw new Error("expected new package");
+  expect(newPkg.status).toBe("complete");
+
+  // Older package superseded — no longer polled.
+  const oldPkg = getPackage(OLD_PKG);
+  if (!oldPkg) throw new Error("expected old package");
+  expect(oldPkg.status).toBe("superseded");
+  const ciStep = oldPkg.steps.find((s) => s.stepId === "ci");
+  expect(ciStep?.status).toBe("skipped");
+  expect(ciStep?.detail).toBe("superseded by newer deployment");
+});
+
 test("gatherUpstream collects IDs from existing steps", () => {
   const steps: StepState[] = [
     {

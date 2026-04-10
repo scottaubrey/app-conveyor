@@ -6,6 +6,7 @@ import {
   findPackageByCommitPrefix,
   getPackage,
   listActivePackages,
+  supersedeBefore,
   upsertPackage,
   upsertStepState,
 } from "./db";
@@ -130,6 +131,12 @@ export class Engine {
     const packages = listActivePackages(this.cfg.id);
     for (const pkg of packages) {
       await this.advancePackage(pkg);
+    }
+    const count = supersedeBefore(this.cfg.id);
+    if (count > 0) {
+      console.log(
+        `[engine:${this.cfg.id}] superseded ${count} older package(s)`,
+      );
     }
   }
 

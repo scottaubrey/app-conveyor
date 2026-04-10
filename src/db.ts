@@ -237,6 +237,76 @@ export function getStepHistory(
     .all(packageId, stepId);
 }
 
+// ─── Package supersede ────────────────────────────────────────────────────────
+
+/**
+ * Marks active packages as superseded if a newer fully-passed package exists.
+ *
+ * A "fully passed" package is complete with no failed steps. Once such a
+ * package exists, any older active packages will never deploy — the system has
+ * moved past them. Their in-progress steps are marked skipped and the package
+ * is removed from the active polling set.
+ *
+ * Returns the number of packages superseded.
+ */
+export function supersedeBefore(pipelineId: string): number {
+  const db = getDb();
+
+  // Newest complete package where no step failed (i.e. all passed/skipped)
+  const anchor = db
+    .query<{ created_at: string }, [string]>(
+      `SELECT p.created_at
+       FROM packages p
+       WHERE p.pipeline_id = ?
+         AND p.status = 'complete'
+         AND NOT EXISTS (
+           SELECT 1 FROM step_states s
+           WHERE s.package_id = p.id AND s.status = 'failed'
+         )
+       ORDER BY p.created_at DESC
+       LIMIT 1`,
+    )
+    .get(pipelineId);
+
+  if (!anchor) return 0;
+
+  const stale = db
+    .query<{ id: string }, [string, string]>(
+      `SELECT id FROM packages
+       WHERE pipeline_id = ? AND status = 'active' AND created_at < ?`,
+    )
+    .all(pipelineId, anchor.created_at);
+
+  const ts = now();
+  const detail = "superseded by newer deployment";
+
+  for (const { id } of stale) {
+    const inProgress = db
+      .query<{ step_id: string }, [string]>(
+        `SELECT step_id FROM step_states
+         WHERE package_id = ? AND status IN ('pending', 'running')`,
+      )
+      .all(id);
+
+    for (const { step_id } of inProgress) {
+      db.run(
+        "UPDATE step_states SET status = 'skipped', label = '–', detail = ?, updated_at = ? WHERE package_id = ? AND step_id = ?",
+        [detail, ts, id, step_id],
+      );
+      db.run(
+        "INSERT INTO step_history (package_id, step_id, status, label, detail, recorded_at) VALUES (?, ?, 'skipped', '–', ?, ?)",
+        [id, step_id, detail, ts],
+      );
+    }
+    db.run(
+      "UPDATE packages SET status = 'superseded', updated_at = ? WHERE id = ?",
+      [ts, id],
+    );
+  }
+
+  return stale.length;
+}
+
 // ─── Package reset ─────────────────────────────────────────────────────────────
 
 /**

@@ -10,7 +10,9 @@ const {
   getPackage,
   listPackages,
   getStepHistory,
+  listActivePackages,
   resetPackage,
+  supersedeBefore,
 } = await import("../db");
 
 const PIPELINE = "test-pipeline";
@@ -226,4 +228,188 @@ test("resetPackage with newSnapshot updates config_snapshot", () => {
   resetPackage(id, ["src"], newConfig);
   const pkg = getPackage(id);
   expect(pkg?.configSnapshot?.name).toBe("Updated Pipeline");
+});
+
+// ─── supersedeBefore ─────────────────────────────────────────────────────────
+
+// Each test uses its own pipeline ID so packages don't bleed between tests.
+const T_OLD = "2000-01-01T00:00:00.000Z";
+const T_MID = "2000-06-01T00:00:00.000Z";
+const T_NEW = "2001-01-01T00:00:00.000Z";
+
+function superPkg(
+  pipelineId: string,
+  suffix: string,
+  createdAt: string,
+  status: "active" | "complete" | "superseded" = "active",
+) {
+  const id = `ffff${suffix}`;
+  upsertPackage({
+    id,
+    pipelineId,
+    commitHash: id,
+    repoFullName: "org/app",
+    branch: "main",
+    createdAt,
+    updatedAt: createdAt,
+    currentStep: 0,
+    status,
+  });
+  return id;
+}
+
+test("supersedeBefore returns 0 when no complete package exists", () => {
+  const pl = "sup-1";
+  const id = superPkg(pl, "000000000000000000000000000000000001", T_OLD);
+  upsertStepState(id, {
+    stepId: "ci",
+    status: "running",
+    label: "…",
+    updatedAt: T_OLD,
+  });
+
+  expect(supersedeBefore(pl)).toBe(0);
+  expect(getPackage(id)?.status).toBe("active");
+});
+
+test("supersedeBefore returns 0 when newest complete package has a failed step", () => {
+  const pl = "sup-2";
+  const oldId = superPkg(pl, "000000000000000000000000000000000002", T_OLD);
+  const newId = superPkg(
+    pl,
+    "000000000000000000000000000000000003",
+    T_NEW,
+    "complete",
+  );
+  upsertStepState(oldId, {
+    stepId: "ci",
+    status: "running",
+    label: "…",
+    updatedAt: T_OLD,
+  });
+  upsertStepState(newId, {
+    stepId: "ci",
+    status: "failed",
+    label: "err",
+    updatedAt: T_NEW,
+  });
+
+  expect(supersedeBefore(pl)).toBe(0);
+  expect(getPackage(oldId)?.status).toBe("active");
+});
+
+test("supersedeBefore supersedes active packages older than the anchor", () => {
+  const pl = "sup-3";
+  const oldId = superPkg(pl, "000000000000000000000000000000000004", T_OLD);
+  const newId = superPkg(
+    pl,
+    "000000000000000000000000000000000005",
+    T_NEW,
+    "complete",
+  );
+  upsertStepState(oldId, {
+    stepId: "ci",
+    status: "running",
+    label: "…",
+    updatedAt: T_OLD,
+  });
+  upsertStepState(newId, {
+    stepId: "ci",
+    status: "passed",
+    label: "ok",
+    updatedAt: T_NEW,
+  });
+
+  expect(supersedeBefore(pl)).toBe(1);
+  expect(getPackage(oldId)?.status).toBe("superseded");
+  const ci = getPackage(oldId)?.steps.find((s) => s.stepId === "ci");
+  expect(ci?.status).toBe("skipped");
+  expect(ci?.detail).toBe("superseded by newer deployment");
+});
+
+test("supersedeBefore does not supersede active packages newer than the anchor", () => {
+  const pl = "sup-4";
+  const oldId = superPkg(
+    pl,
+    "000000000000000000000000000000000006",
+    T_OLD,
+    "complete",
+  );
+  const newId = superPkg(pl, "000000000000000000000000000000000007", T_NEW);
+  upsertStepState(oldId, {
+    stepId: "ci",
+    status: "passed",
+    label: "ok",
+    updatedAt: T_OLD,
+  });
+  upsertStepState(newId, {
+    stepId: "ci",
+    status: "running",
+    label: "…",
+    updatedAt: T_NEW,
+  });
+
+  expect(supersedeBefore(pl)).toBe(0);
+  expect(getPackage(newId)?.status).toBe("active");
+});
+
+test("supersedeBefore records step history for superseded steps", () => {
+  const pl = "sup-5";
+  const oldId = superPkg(pl, "000000000000000000000000000000000008", T_OLD);
+  const newId = superPkg(
+    pl,
+    "000000000000000000000000000000000009",
+    T_NEW,
+    "complete",
+  );
+  upsertStepState(oldId, {
+    stepId: "ci",
+    status: "pending",
+    label: "…",
+    updatedAt: T_OLD,
+  });
+  upsertStepState(newId, {
+    stepId: "ci",
+    status: "passed",
+    label: "ok",
+    updatedAt: T_NEW,
+  });
+
+  supersedeBefore(pl);
+
+  const hist = getStepHistory(oldId, "ci");
+  const entry = hist.find((h) => h.status === "skipped");
+  expect(entry).toBeDefined();
+  expect(entry?.detail).toBe("superseded by newer deployment");
+});
+
+test("supersedeBefore does not touch already-complete packages", () => {
+  const pl = "sup-6";
+  const doneId = superPkg(
+    pl,
+    "00000000000000000000000000000000000a0",
+    T_MID,
+    "complete",
+  );
+  const newId = superPkg(
+    pl,
+    "00000000000000000000000000000000000b0",
+    T_NEW,
+    "complete",
+  );
+  upsertStepState(doneId, {
+    stepId: "ci",
+    status: "failed",
+    label: "err",
+    updatedAt: T_MID,
+  });
+  upsertStepState(newId, {
+    stepId: "ci",
+    status: "passed",
+    label: "ok",
+    updatedAt: T_NEW,
+  });
+
+  expect(supersedeBefore(pl)).toBe(0); // complete packages are not in the active set
+  expect(getPackage(doneId)?.status).toBe("complete");
 });

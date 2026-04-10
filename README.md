@@ -25,6 +25,8 @@ Supported step types:
 
 The web UI (port 3000 by default) shows all pipelines and packages with per-step status. A JSON API is also available at `/api/packages?pipeline=<id>`.
 
+When a newer commit fully deploys, any older commits that are still in-flight are automatically marked as **superseded** ("Old") and removed from the active polling set — they will never deploy since the system has moved past them.
+
 ## Prerequisites
 
 This project uses [mise](https://mise.jdx.dev) to manage tool versions. Install mise, then run:

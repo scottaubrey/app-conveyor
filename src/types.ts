@@ -55,5 +55,5 @@ export interface Package {
   steps: StepState[];
   currentStep: number;
   configSnapshot?: PipelineConfig; // pipeline config at the time the package was created
-  status: "active" | "complete";
+  status: "active" | "complete" | "superseded";
 }
