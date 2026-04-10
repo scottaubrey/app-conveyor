@@ -458,14 +458,29 @@ function renderPackageRow(
     .map((cfg) => {
       const state = stepMap.get(cfg.id);
       if (!state) {
-        return `<div class="step-cell pending" title="not yet initialized">
-        <span class="step-badge">Wait</span>
+        // Step not in this package's step_states (added to pipeline after
+        // package was created). Show as skipped on superseded packages, else
+        // pending (will be initialised on first advance).
+        const cls = pkg.status === "superseded" ? "skipped" : "pending";
+        const badge =
+          pkg.status === "superseded"
+            ? STATUS_LABEL.skipped
+            : STATUS_LABEL.pending;
+        return `<div class="step-cell ${cls}" title="not yet initialized">
+        <span class="step-badge">${badge}</span>
         <span class="step-value">…</span>
       </div>`;
       }
 
-      const cls = STATUS_CLASS[state.status] ?? "pending";
-      const badge = STATUS_LABEL[state.status] ?? state.status;
+      const isStuck =
+        pkg.status === "superseded" &&
+        (state.status === "pending" || state.status === "running");
+      const cls = isStuck
+        ? "skipped"
+        : (STATUS_CLASS[state.status] ?? "pending");
+      const badge = isStuck
+        ? STATUS_LABEL.skipped
+        : (STATUS_LABEL[state.status] ?? state.status);
       const tooltip = [
         `${stepLabel(cfg)} [${cfg.id}]`,
         `status: ${state.status}`,
