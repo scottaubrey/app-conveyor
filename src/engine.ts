@@ -18,7 +18,7 @@ import { syncGhcr } from "./modules/ghcr";
 import { buildStepState, fetchLatestCommit } from "./modules/git";
 import { syncK8sDeploy } from "./modules/k8s-deploy";
 import type { Package, PipelineConfig, StepConfig, StepState } from "./types";
-import { now } from "./util";
+import { Logger, now } from "./util";
 
 export class Engine {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -30,20 +30,21 @@ export class Engine {
     if (this.running) return;
     this.running = true;
     const interval = this.cfg.pollIntervalMs ?? 60_000;
-    this.poll().catch(console.error);
-    this.timer = setInterval(() => this.poll().catch(console.error), interval);
-    console.log(
-      `[engine:${this.cfg.id}] started, polling every ${interval / 1000}s`,
+    this.poll().catch(Logger.error);
+    this.timer = setInterval(() => this.poll().catch(Logger.error), interval);
+    Logger.log(
+      `[ENGINE] pipeline="${this.cfg.id}" action="start" intervalMs=${interval}`,
     );
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.running = false;
+    Logger.log(`[ENGINE] pipeline="${this.cfg.id}" action="stop"`);
   }
 
   async poll() {
-    console.log(`[engine:${this.cfg.id}] poll at ${new Date().toISOString()}`);
+    Logger.log(`[ENGINE] pipeline="${this.cfg.id}" action="poll"`);
     await this.discoverNewCommits();
     await this.advancePackages();
   }
@@ -51,19 +52,19 @@ export class Engine {
   async pollPackage(commitPrefix: string) {
     const pkg = findPackageByCommitPrefix(this.cfg.id, commitPrefix);
     if (!pkg) {
-      console.warn(
-        `[engine:${this.cfg.id}] pollPackage: no package matching ${commitPrefix}`,
+      Logger.warn(
+        `[ENGINE] pipeline="${this.cfg.id}" action="pollPackage" status="not_found" prefix="${commitPrefix}"`,
       );
       return;
     }
     if (pkg.status === "superseded") {
-      console.log(
-        `[engine:${this.cfg.id}] pollPackage: ${pkg.commitHash.slice(0, 7)} is superseded — skipping`,
+      Logger.log(
+        `[ENGINE] pipeline="${this.cfg.id}" action="pollPackage" status="superseded" package="${pkg.commitHash.slice(0, 7)}"`,
       );
       return;
     }
-    console.log(
-      `[engine:${this.cfg.id}] pollPackage ${pkg.commitHash.slice(0, 7)} at ${new Date().toISOString()}`,
+    Logger.log(
+      `[ENGINE] pipeline="${this.cfg.id}" action="pollPackage" package="${pkg.commitHash.slice(0, 7)}"`,
     );
     await this.advancePackage(pkg);
   }
@@ -73,14 +74,14 @@ export class Engine {
   private async discoverNewCommits() {
     const gitSteps = this.cfg.steps.filter((s) => s.type === "git");
     for (const step of gitSteps) {
-      console.log(
-        `[engine:${this.cfg.id}] git: checking ${step.repo}/${step.branch}`,
+      Logger.log(
+        `[GIT] pipeline="${this.cfg.id}" action="check" repo="${step.repo}" branch="${step.branch}"`,
       );
       try {
         const commit = await fetchLatestCommit(step);
         if (!commit) {
-          console.log(
-            `[engine:${this.cfg.id}] git: no commit returned for ${step.repo}/${step.branch}`,
+          Logger.log(
+            `[GIT] pipeline="${this.cfg.id}" action="check" status="no_commit"`,
           );
           continue;
         }
@@ -88,14 +89,13 @@ export class Engine {
         const pkgId = `${this.cfg.id}:${commit.sha}`;
         const existing = getPackage(pkgId);
         if (existing) {
-          console.log(
-            `[engine:${this.cfg.id}] git: ${commit.sha.slice(0, 7)} already tracked`,
-          );
-          continue;
+          // Noisy at high poll rates, but useful for debugging connectivity.
+          // Consider making this debug-only if needed.
+          return;
         }
 
-        console.log(
-          `[engine:${this.cfg.id}] new commit ${commit.sha.slice(0, 7)} on ${step.repo}/${step.branch}: ${commit.message}`,
+        Logger.log(
+          `[GIT] pipeline="${this.cfg.id}" action="new_commit" package="${commit.sha.slice(0, 7)}" message="${commit.message}"`,
         );
 
         const pkg: Omit<Package, "steps"> = {
@@ -126,7 +126,9 @@ export class Engine {
           });
         }
       } catch (e) {
-        console.error(`[engine:${this.cfg.id}] git discover error:`, e);
+        Logger.error(
+          `[GIT] pipeline="${this.cfg.id}" action="discover_error" error="${e}"`,
+        );
       }
     }
   }
@@ -140,8 +142,8 @@ export class Engine {
     }
     const count = supersedeBefore(this.cfg.id);
     if (count > 0) {
-      console.log(
-        `[engine:${this.cfg.id}] superseded ${count} older package(s)`,
+      Logger.log(
+        `[ENGINE] pipeline="${this.cfg.id}" action="supersede" count=${count}`,
       );
     }
   }
@@ -184,8 +186,8 @@ export class Engine {
         };
       }
 
-      console.log(
-        `[engine:${this.cfg.id}] ${pkg.commitHash.slice(0, 7)} [${stepCfg.id}] → ${newState.status} (${newState.label})${newState.detail ? ` | ${newState.detail}` : ""}`,
+      Logger.log(
+        `[ENGINE] pipeline="${this.cfg.id}" package="${pkg.commitHash.slice(0, 7)}" step="${stepCfg.id}" status="${newState.status}" label="${newState.label}"`,
       );
       upsertStepState(pkg.id, newState);
 
@@ -196,9 +198,6 @@ export class Engine {
       if (newState.syncRevision) upstream.syncRevision = newState.syncRevision;
 
       if (newState.status === "failed") {
-        console.log(
-          `[engine:${this.cfg.id}] ${pkg.commitHash.slice(0, 7)} stopped at [${stepCfg.id}]: failed`,
-        );
         breakReason = "failed";
         break;
       }
@@ -210,8 +209,8 @@ export class Engine {
 
     const isComplete = breakReason !== "waiting";
     if (isComplete && pkg.status !== "complete") {
-      console.log(
-        `[engine:${this.cfg.id}] ${pkg.commitHash.slice(0, 7)} complete (${breakReason ?? "all passed"})`,
+      Logger.log(
+        `[ENGINE] pipeline="${this.cfg.id}" package="${pkg.commitHash.slice(0, 7)}" action="complete" result="${breakReason ?? "passed"}"`,
       );
     }
 

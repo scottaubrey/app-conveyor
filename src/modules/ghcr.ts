@@ -10,7 +10,7 @@
 
 import { ghFetch } from "../github";
 import type { StepConfig, StepState } from "../types";
-import { errorMessage, now } from "../util";
+import { errorMessage, Logger, now } from "../util";
 
 interface GhcrVersion {
   metadata?: {
@@ -155,7 +155,7 @@ async function findTagViaGithubApi(
       const versions = (await ghFetch(endpoint)) as GhcrVersion[];
       if (!Array.isArray(versions)) continue;
 
-      console.log(
+      Logger.log(
         `[ghcr] GitHub Packages API returned ${versions.length} versions for ${repo}`,
       );
 
@@ -168,7 +168,7 @@ async function findTagViaGithubApi(
       // Got a valid response but no match in first 100 versions — stop here
       return null;
     } catch (e: unknown) {
-      console.warn(
+      Logger.warn(
         `[ghcr] GitHub Packages API failed for ${endpoint}: ${errorMessage(e)}`,
       );
     }
@@ -193,7 +193,7 @@ async function findTagViaOci(
       headers: { Authorization: `Bearer ${bearerToken}` },
     });
     if (!resp.ok) {
-      console.warn(`[ghcr] OCI tags/list ${resp.status} for ${repo}`);
+      Logger.warn(`[ghcr] OCI tags/list ${resp.status} for ${repo}`);
       break;
     }
 

@@ -3,6 +3,7 @@ import { Engine } from "./src/engine";
 import { Reconciler } from "./src/reconciler";
 import { createServer } from "./src/server";
 import type { PipelineConfig } from "./src/types";
+import { Logger } from "./src/util";
 
 const watchNamespace = process.env.WATCH_NAMESPACE;
 
@@ -52,8 +53,8 @@ if (watchNamespace) {
 }
 
 if (!cfg && !watchNamespace) {
-  console.error(
-    "[startup] No config source active. Provide conveyor.yaml, set CONFIG_PATH, or set WATCH_NAMESPACE.",
+  Logger.error(
+    '[STARTUP] status="error" reason="no_config_source" message="Provide conveyor.yaml, set CONFIG_PATH, or set WATCH_NAMESPACE."',
   );
   process.exit(1);
 }

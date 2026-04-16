@@ -1,6 +1,7 @@
 import { YAML } from "bun";
 import { AppConfigSchema } from "./schemas";
 import type { AppConfig } from "./types";
+import { Logger } from "./util";
 
 export async function loadConfig(): Promise<AppConfig | null> {
   const explicitPath = process.env.CONFIG_PATH;
@@ -9,7 +10,9 @@ export async function loadConfig(): Promise<AppConfig | null> {
 
   if (!(await file.exists())) {
     if (explicitPath) {
-      console.error(`[config] Config file not found: ${configPath}`);
+      Logger.error(
+        `[CONFIG] action="load" status="error" path="${configPath}" error="file_not_found"`,
+      );
       process.exit(1);
     }
     return null; // conveyor.yaml absent — YAML source simply inactive
@@ -19,15 +22,19 @@ export async function loadConfig(): Promise<AppConfig | null> {
   const result = AppConfigSchema.safeParse(raw);
 
   if (!result.success) {
-    console.error(`[config] Invalid config in ${configPath}:`);
+    Logger.error(
+      `[CONFIG] action="load" status="error" path="${configPath}" error="invalid_config"`,
+    );
     for (const issue of result.error.issues) {
-      console.error(`  ${issue.path.join(".")}: ${issue.message}`);
+      Logger.error(
+        `[CONFIG]   field="${issue.path.join(".")}" message="${issue.message}"`,
+      );
     }
     process.exit(1);
   }
 
-  console.log(
-    `[config] Loaded ${result.data.pipelines.length} static pipeline(s) from ${configPath}`,
+  Logger.log(
+    `[CONFIG] action="load" status="success" path="${configPath}" pipelines=${result.data.pipelines.length}`,
   );
   return result.data;
 }

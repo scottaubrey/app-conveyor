@@ -1,3 +1,21 @@
+export const Logger = {
+  log: (...args: unknown[]) => {
+    if (process.env.SILENT === "true" || process.env.NODE_ENV === "test")
+      return;
+    console.log(`timestamp="${new Date().toISOString()}"`, ...args);
+  },
+  warn: (...args: unknown[]) => {
+    if (process.env.SILENT === "true" || process.env.NODE_ENV === "test")
+      return;
+    console.warn(`timestamp="${new Date().toISOString()}"`, ...args);
+  },
+  error: (...args: unknown[]) => {
+    if (process.env.SILENT === "true" || process.env.NODE_ENV === "test")
+      return;
+    console.error(`timestamp="${new Date().toISOString()}"`, ...args);
+  },
+};
+
 export function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);

@@ -1,6 +1,7 @@
 import { Engine } from "./engine";
 import { getKubeClient, startKubeWatch } from "./kube";
 import type { PipelineConfig } from "./types";
+import { Logger } from "./util";
 
 const GROUP = "app-conveyor.elifesciences.org";
 const VERSION = "v1alpha1";
@@ -103,7 +104,7 @@ export class Reconciler {
         this.onEvent,
         this.onWatchDone("all namespaces"),
       );
-      console.log("[reconciler] watching all namespaces");
+      Logger.log('[RECONCILER] action="watch" scope="all"');
     } else {
       for (const namespace of this.namespaces) {
         const items = await this.k8s.listNamespaced(namespace);
@@ -114,8 +115,8 @@ export class Reconciler {
           this.onWatchDone(namespace),
         );
       }
-      console.log(
-        `[reconciler] watching namespaces: ${this.namespaces.join(", ")}`,
+      Logger.log(
+        `[RECONCILER] action="watch" namespaces="${this.namespaces.join(", ")}"`,
       );
     }
   }
@@ -148,20 +149,19 @@ export class Reconciler {
       const isExpected =
         !err || (err instanceof DOMException && err.name === "TimeoutError");
       if (!isExpected) {
-        console.error(
-          `[reconciler] watch error in ${label}:`,
-          err instanceof Error ? err.message : String(err),
-        );
+        Logger.error(`[RECONCILER] action="watch_error" scope="${label}"`, err);
       }
-      console.log(`[reconciler] reconnecting watch for ${label}`);
-      setTimeout(() => this.start().catch(console.error), 5000);
+      Logger.log(`[RECONCILER] action="reconnect" scope="${label}"`);
+      setTimeout(() => this.start().catch(Logger.error), 5000);
     };
   }
 
   private upsertEngine(cr: PipelineCR): void {
     const key = `${cr.metadata.namespace}/${cr.metadata.name}`;
     if (this.reservedIds.has(cr.metadata.name)) {
-      console.log(`[reconciler] skipping ${key} — owned by static config`);
+      Logger.log(
+        `[RECONCILER] action="skip" pipeline="${cr.metadata.name}" reason="owned_by_static_config"`,
+      );
       return;
     }
     const cfg: PipelineConfig = { id: cr.metadata.name, ...cr.spec };
@@ -174,9 +174,11 @@ export class Reconciler {
         return;
       }
       existing.stop();
-      console.log(`[reconciler] restarting engine for ${key}`);
+      Logger.log(
+        `[RECONCILER] action="restart" pipeline="${cr.metadata.name}"`,
+      );
     } else {
-      console.log(`[reconciler] starting engine for ${key}`);
+      Logger.log(`[RECONCILER] action="start" pipeline="${cr.metadata.name}"`);
     }
 
     const engine = this.createEngine(cfg);
@@ -193,8 +195,8 @@ export class Reconciler {
   private removeEngine(key: string): void {
     const name = key.split("/")[1] ?? key;
     if (this.reservedIds.has(name)) {
-      console.log(
-        `[reconciler] ignoring delete for ${key} — owned by static config`,
+      Logger.log(
+        `[RECONCILER] action="skip_delete" pipeline="${name}" reason="owned_by_static_config"`,
       );
       return;
     }
@@ -207,6 +209,6 @@ export class Reconciler {
     this.pipelines.delete(name);
     this.pollers.delete(name);
     this.packagePollers.delete(name);
-    console.log(`[reconciler] removed engine for ${key}`);
+    Logger.log(`[RECONCILER] action="remove" pipeline="${name}"`);
   }
 }

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { Logger } from "./util";
 
 interface Migration {
   version: number;
@@ -128,10 +129,12 @@ export function runMigrations(db: Database): void {
       "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
       [migration.version, new Date().toISOString()],
     );
-    console.log(`[migrations] applied migration ${migration.version}`);
+    Logger.log(`[MIGRATIONS] action="apply" version=${migration.version}`);
     count++;
   }
   if (count === 0) {
-    console.log(`[migrations] schema up to date (${applied.size} applied)`);
+    Logger.log(
+      `[MIGRATIONS] action="check" status="up_to_date" count=${applied.size}`,
+    );
   }
 }

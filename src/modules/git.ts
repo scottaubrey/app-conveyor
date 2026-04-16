@@ -5,7 +5,7 @@
 
 import { ghFetch } from "../github";
 import type { StepConfig, StepState } from "../types";
-import { now } from "../util";
+import { Logger, now } from "../util";
 
 interface GithubBranch {
   commit?: {
@@ -27,7 +27,7 @@ export async function fetchLatestCommit(
   cfg: StepConfig,
 ): Promise<GitCommit | null> {
   if (!cfg.repo || !cfg.branch) {
-    console.warn(`[git] step missing repo/branch config`);
+    Logger.warn(`[git] step missing repo/branch config`);
     return null;
   }
   // Let errors propagate so the engine can log them

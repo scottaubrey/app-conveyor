@@ -10,8 +10,17 @@ import {
   renderPackageDetail,
 } from "./render";
 import type { PipelineConfig, StepHistoryEntry } from "./types";
+import { Logger } from "./util";
 
 const htmlHeaders = { "Content-Type": "text/html; charset=utf-8" };
+
+function getUser(req: Request): string {
+  return req.headers.get("X-Auth-Request-User") ?? "anonymous";
+}
+
+function audit(user: string, action: string, details: string) {
+  Logger.log(`[AUDIT] user="${user}" action="${action}" ${details}`);
+}
 
 export function createServer(
   pipelines: Map<string, PipelineConfig>,
@@ -24,6 +33,7 @@ export function createServer(
     pipelineId: string,
     commitId: string,
     action: "retry" | "reset",
+    user: string,
   ): Promise<Response> {
     const pipeline = pipelines.get(pipelineId);
     if (!pipeline) return new Response("Pipeline not found", { status: 404 });
@@ -47,11 +57,15 @@ export function createServer(
       .filter((s) => s.type === "git")
       .map((s) => s.id);
     resetPackage(pkg.id, gitStepIds, action === "reset" ? pipeline : undefined);
-    console.log(
-      `[server] ${action} package ${pkg.commitHash.slice(0, 7)} in pipeline ${pipelineId}`,
+
+    audit(
+      user,
+      action,
+      `pipeline="${pipelineId}" package="${pkg.commitHash.slice(0, 7)}"`,
     );
+
     const trigger = packagePollers.get(pipelineId);
-    if (trigger) trigger(commitId).catch(console.error);
+    if (trigger) trigger(commitId).catch(Logger.error);
     return new Response(null, {
       status: 303,
       headers: { Location: `/pipeline/${pipelineId}/package/${commitId}` },
@@ -107,6 +121,8 @@ export function createServer(
         const trigger = pollers.get(pipelineId);
         if (!trigger)
           return new Response("Pipeline not found", { status: 404 });
+        const user = getUser(req);
+        audit(user, "sync-pipeline", `pipeline="${pipelineId}"`);
         await trigger();
         const formData = await req.formData().catch(() => null);
         const redirect =
@@ -153,6 +169,12 @@ export function createServer(
         const trigger = packagePollers.get(pipelineId);
         if (!trigger)
           return new Response("Pipeline not found", { status: 404 });
+        const user = getUser(req);
+        audit(
+          user,
+          "sync-package",
+          `pipeline="${pipelineId}" package="${commitId}"`,
+        );
         await trigger(commitId);
         return new Response(null, {
           status: 303,
@@ -164,22 +186,32 @@ export function createServer(
       "/pipeline/:pipelineId/package/:commitId/retry": (req) => {
         if (req.method !== "POST")
           return new Response("Method Not Allowed", { status: 405 });
-        return handleReset(req.params.pipelineId, req.params.commitId, "retry");
+        return handleReset(
+          req.params.pipelineId,
+          req.params.commitId,
+          "retry",
+          getUser(req),
+        );
       },
 
       // POST /pipeline/:pipelineId/package/:commitId/reset — reset steps, adopt current config
       "/pipeline/:pipelineId/package/:commitId/reset": (req) => {
         if (req.method !== "POST")
           return new Response("Method Not Allowed", { status: 405 });
-        return handleReset(req.params.pipelineId, req.params.commitId, "reset");
+        return handleReset(
+          req.params.pipelineId,
+          req.params.commitId,
+          "reset",
+          getUser(req),
+        );
       },
     },
     error(err) {
-      console.error("[server] unhandled error:", err);
+      Logger.error("[SERVER] unhandled error:", err);
       return new Response("Internal server error", { status: 500 });
     },
   });
 
-  console.log(`[server] listening on http://localhost:${port}`);
+  Logger.log(`[SERVER] listening on http://localhost:${port}`);
   return server;
 }
